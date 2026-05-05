@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PWA Calculator v3</title>
+  <style>
+    :root {
+      --main: #4f46e5;
+      --bg: #eef2ff;
+      --card: #ffffff;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(135deg, #e0e7ff, #f5f5f5);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 10px;
+    }
+    .container {
+      width: 100%;
+      max-width: 420px;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    }
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: var(--main);
+    }
+    .input-box {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    input {
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      font-size: 16px;
+      transition: 0.2s;
+    }
+    input:focus {
+      border-color: var(--main);
+      outline: none;
+      box-shadow: 0 0 5px rgba(79,70,229,0.3);
+    }
+    button {
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 12px;
+      border: none;
+      background: var(--main);
+      color: white;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+      width: 100%;
+    }
+    button:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+    .result {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 12px;
+      background: #f9fafb;
+      border: 1px solid #ddd;
+      font-size: 15px;
+    }
+    .result div {
+      margin: 6px 0;
+      display: flex;
+      justify-content: space-between;
+    }
+    .label {
+      font-weight: bold;
+      color: #555;
+    }
+    .value {
+      font-family: monospace;
+    }
+    .loading {
+      text-align: center;
+      font-size: 14px;
+      color: #666;
+    }
+    #chart {
+      margin-top: 20px;
+      width: 100%;
+      height: 280px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>計算エンジン v3</h2>
+    <div class="input-box">
+      <input id="B" type="number" placeholder="B" step="any">
+      <input id="V1" type="number" placeholder="V1" step="any">
+      <input id="V2" type="number" placeholder="V2" step="any">
+      <input id="S2" type="number" placeholder="S2" step="any">
+      <input id="SX" type="number" placeholder="SX" step="any">
+      <input id="r" type="number" placeholder="r" step="any">
+      <input id="g" type="number" placeholder="g" step="any">
+    </div>
+    
+    <button onclick="calc()">計算する</button>
+    
+    <div class="result" id="resultBox">
+      <div><span class="label">R1</span><span class="value" id="R1">-</span></div>
+      <div><span class="label">R2</span><span class="value" id="R2">-</span></div>
+    </div>
+
+    <canvas id="chart"></canvas>
+  </div>
+
+  <script>
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzuvocWXPQN4zP07H30edoZfgx4MATBJJP4I9VkTzmidOnI4kUiMklg7uh27n8jMJyy/exec";
+    
+    async function calc() {
+      const B = Number(document.getElementById("B").value);
+      const V1 = Number(document.getElementById("V1").value);
+      const V2 = Number(document.getElementById("V2").value);
+      const S2 = Number(document.getElementById("S2").value);
+      const SX = Number(document.getElementById("SX").value);
+      const r = Number(document.getElementById("r").value);
+      const g = Number(document.getElementById("g").value);
+      
+      const box = document.getElementById("resultBox");
+      box.innerHTML = '<div class="loading">GASからR1,R2取得中...</div>';
+      
+      try {
+        // 1. GASに7個の変数を送る
+        const res = await fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ B, V1, V2, S2, SX, r, g })
+        });
+        const data = await res.json();
+        
+        const R1 = Number(data.R1);
+        const R2 = Number(data.R2);
+        
+        if (isNaN(R1) || isNaN(R2)) {
+          box.innerHTML = '<div class="loading">エラー: GASからR1,R2が取得できませんでした</div>';
+          console.log('GAS response:', data);
+          return;
+        }
+
+        // 2. 表示
+        box.innerHTML = `
+          <div><span class="label">R1</span><span class="value">${R1.toFixed(6)}</span></div>
+          <div><span class="label">R2</span><span class="value">${R2.toFixed(6)}</span></div>
+        `;
+
+        // 3. グラフ描画: (V1,0)-(0,R1), (V2,0)-(0,R2)
+        drawChart(V1, V2, R1, R2);
+        
+      } catch (e) {
+        box.innerHTML = '<div class="loading">エラー: GAS通信に失敗しました</div>';
+        console.error(e);
+      }
+    }
+
+    function drawChart(V1, V2, R1, R2) {
+      const canvas = document.getElementById("chart");
+      const ctx = canvas.getContext("2d");
+      
+      // Retina対応
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      const w = rect.width;
+      const h = rect.height;
+      
+      ctx.clearRect(0, 0, w, h);
+      
+      // 軸の範囲を決定
+      const maxX = Math.max(V1, V2) * 1.1 || 10;
+      const maxY = Math.max(R1, R2) * 1.1 || 10;
+      const padding = 30;
+      
+      // 座標変換関数
+      const toX = (val) => padding + (w - padding * 2) * (val / maxX);
+      const toY = (val) => h - padding - (h - padding * 2) * (val / maxY);
+      
+      // 軸を描画
+      ctx.strokeStyle = "#9ca3af";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padding, h - padding);
+      ctx.lineTo(w - padding, h - padding); // X軸
+      ctx.moveTo(padding, h - padding);
+      ctx.lineTo(padding, padding); // Y軸
+      ctx.stroke();
+      
+      // 線1: (V1,0) -> (0,R1)
+      ctx.strokeStyle = "#ef4444";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(toX(V1), toY(0));
+      ctx.lineTo(toX(0), toY(R1));
+      ctx.stroke();
+      
+      // 線2: (V2,0) -> (0,R2)
+      ctx.strokeStyle = "#3b82f6";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(toX(V2), toY(0));
+      ctx.lineTo(toX(0), toY(R2));
+      ctx.stroke();
+      
+      // ラベル
+      ctx.fillStyle = "#374151";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("V1-R1", toX(V1/2), toY(R1/2) - 5);
+      ctx.fillText("V2-R2", toX(V2/2), toY(R2/2) + 15);
+    }
+  </script>
+</body>
+</html>
